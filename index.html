@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="ka">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Grow or Escape</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #050712;
+      font-family: Arial, sans-serif;
+      color: white;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+    }
+
+    canvas {
+      display: block;
+      background: radial-gradient(circle at center, #101733 0%, #050712 70%);
+    }
+
+    #ui {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      z-index: 10;
+      font-size: 18px;
+      line-height: 1.5;
+      text-shadow: 0 0 10px #00eaff;
+      pointer-events: none;
+    }
+
+    #center {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      background: rgba(0, 0, 0, 0.42);
+      z-index: 20;
+      text-align: center;
+      padding: 22px;
+    }
+
+    h1 {
+      font-size: 44px;
+      margin: 0 0 12px;
+      text-shadow: 0 0 24px #00eaff;
+    }
+
+    p {
+      font-size: 17px;
+      opacity: 0.9;
+      max-width: 330px;
+    }
+
+    button {
+      margin-top: 18px;
+      padding: 16px 32px;
+      border: 0;
+      border-radius: 999px;
+      background: #00eaff;
+      color: #06111f;
+      font-size: 18px;
+      font-weight: bold;
+      cursor: pointer;
+      box-shadow: 0 0 24px #00eaff;
+      position: relative;
+      z-index: 9999;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    #hint {
+      position: fixed;
+      bottom: 118px;
+      width: 100%;
+      text-align: center;
+      color: rgba(255,255,255,.7);
+      font-size: 14px;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    #controlPad {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 105px;
+      z-index: 11;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(180deg, rgba(0,234,255,.03), rgba(0,234,255,.16));
+      border-top: 2px solid rgba(0,234,255,.45);
+      box-shadow: 0 -10px 35px rgba(0,234,255,.12);
+      color: rgba(255,255,255,.82);
+      font-size: 15px;
+      letter-spacing: .4px;
+      text-shadow: 0 0 10px #00eaff;
+    }
+
+    #controlPad:before {
+      content: "";
+      width: 58px;
+      height: 58px;
+      border-radius: 50%;
+      border: 2px solid rgba(0,234,255,.5);
+      box-shadow: 0 0 18px rgba(0,234,255,.35);
+      position: absolute;
+    }
+
+    #controlPad span {
+      margin-top: 70px;
+      pointer-events: none;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="ui">
+    Multiplier: <span id="mult">x1.00</span><br>
+    Status: <span id="status">Grow</span>
+  </div>
+
+  <div id="hint">Eat blue dots • Avoid red bombs • Escape through yellow portal</div>
+  <div id="controlPad"><span>CONTROL AREA — აქედან მართე ბურთი</span></div>
+
+  <div id="center">
+    <h1>GROW OR ESCAPE</h1>
+    <p>ჭამე multiplier dots, გაიზარდე და მოძრავ portal-ში გაიტანე მოგება.</p>
+    <button id="startBtn" type="button">START ROUND</button>
+  </div>
+
+  <canvas id="game"></canvas>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+const multEl = document.getElementById('mult');
+const statusEl = document.getElementById('status');
+const center = document.getElementById('center');
+const startBtn = document.getElementById('startBtn');
+
+let W, H;
+let player, dots, bombs, portal;
+let startTime, roundLength;
+let lastPlayerX, lastPlayerY;
+let running = false;
+let mouse = { x: 0, y: 0 };
+
+const CONTROL_H = 105;
+
+let audioCtx = null;
+let heartbeatOsc = null;
+let heartbeatGain = null;
+let ambientOsc = null;
+let ambientGain = null;
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+
+  if (!mouse.x) {
+    mouse.x = W / 2;
+    mouse.y = H - CONTROL_H - 120;
+  }
+}
+
+window.addEventListener('resize', resize);
+resize();
+
+function rand(a, b) {
+  return Math.random() * (b - a) + a;
+}
+
+function dist(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+window.addEventListener('mousemove', e => {
+  mouse.x = e.clientX;
+  mouse.y = e.clientY;
+});
+
+function handleTouch(e) {
+  const target = e.target;
+
+  if (target && target.id === 'startBtn') {
+    return;
+  }
+
+  if (e.touches && e.touches[0]) {
+    e.preventDefault();
+
+    const t = e.touches[0];
+
+    if (t.clientY > H - CONTROL_H) {
+      mouse.x = t.clientX;
+      mouse.y = H - CONTROL_H - 120;
+    }
+  }
+}
+
+window.addEventListener('touchstart', handleTouch, { passive: false });
+window.addEventListener('touchmove', handleTouch, { passive: false });
+
+function makeDot() {
+  const v = [.06, .09, .12, .18, .25][Math.floor(Math.random() * 5)];
+
+  return {
+    x: rand(30, W - 30),
+    y: rand(70, H - CONTROL_H - 35),
+    r: 7 + v * 18,
+    v,
+    p: rand(0, Math.PI * 2)
+  };
+}
+
+function makeBomb() {
+  return {
+    x: rand(35, W - 35),
+    y: rand(80, H - CONTROL_H - 40),
+    r: rand(10, 16),
+    p: rand(0, Math.PI * 2)
+  };
+}
+
+function initAudio() {
+  if (audioCtx) return;
+
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  heartbeatOsc = audioCtx.createOscillator();
+  heartbeatGain = audioCtx.createGain();
+  heartbeatOsc.type = 'sine';
+  heartbeatOsc.frequency.value = 60;
+  heartbeatGain.gain.value = 0;
+  heartbeatOsc.connect(heartbeatGain);
+  heartbeatGain.connect(audioCtx.destination);
+  heartbeatOsc.start();
+
+  ambientOsc = audioCtx.createOscillator();
+  ambientGain = audioCtx.createGain();
+  ambientOsc.type = 'sine';
+  ambientOsc.frequency.value = 38;
+  ambientGain.gain.value = 0.0025;
+  ambientOsc.connect(ambientGain);
+  ambientGain.connect(audioCtx.destination);
+  ambientOsc.start();
+}
+
+function startGame() {
+  initAudio();
+
+  if (audioCtx && audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+
+  player = {
+    x: W / 2,
+    y: H / 2,
+    r: 16,
+    m: 1,
+    s: .105
+  };
+
+  lastPlayerX = player.x;
+  lastPlayerY = player.y;
+
+  dots = Array.from({ length: 38 }, makeDot);
+  bombs = Array.from({ length: 7 }, makeBomb);
+
+  portal = {
+    x: rand(90, W - 90),
+    y: rand(100, H - CONTROL_H - 90),
+    r: 38,
+    active: false,
+    lastMove: 0
+  };
+
+  startTime = performance.now();
+
+  // Hidden/random round duration: player cannot calculate exact end.
+  roundLength = rand(12000, 18000);
+
+  window.lastBombSpawn = 0;
+  running = true;
+
+  document.body.style.transform = 'scale(1)';
+  document.body.style.filter = 'brightness(1)';
+  center.style.display = 'none';
+  statusEl.textContent = 'Grow';
+
+  requestAnimationFrame(loop);
+}
+
+startBtn.addEventListener('click', startGame);
+
+// iPhone / Safari stronger tap support
+startBtn.addEventListener('touchend', e => {
+  e.preventDefault();
+  startGame();
+}, { passive: false });
+
+function endGame(title, msg) {
+  running = false;
+
+  document.body.style.transform = 'scale(1)';
+  document.body.style.filter = 'brightness(1)';
+
+  center.innerHTML = `
+    <h1>${title}</h1>
+    <p>${msg}</p>
+    <p>Final Multiplier: x${player.m.toFixed(2)}</p>
+    <button id="againBtn" type="button">PLAY AGAIN</button>
+  `;
+
+  center.style.display = 'flex';
+
+  const againBtn = document.getElementById('againBtn');
+
+  againBtn.addEventListener('click', startGame);
+  againBtn.addEventListener('touchend', e => {
+    e.preventDefault();
+    startGame();
+  }, { passive: false });
+}
+
+function glow(x, y, r, color, glowAmount = 22) {
+  ctx.save();
+  ctx.shadowBlur = glowAmount;
+  ctx.shadowColor = color;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function grid() {
+  ctx.save();
+  ctx.globalAlpha = .08;
+  ctx.strokeStyle = '#00eaff';
+
+  for (let x = 0; x < W; x += 60) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, H - CONTROL_H);
+    ctx.stroke();
+  }
+
+  for (let y = 0; y < H - CONTROL_H; y += 60) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function loop(now) {
+  if (!running) return;
+
+  const elapsed = now - startTime;
+
+  if (elapsed > 2000) {
+    portal.active = true;
+    statusEl.textContent = 'ESCAPE!';
+  }
+
+  if (elapsed >= roundLength) {
+    endGame('LOST', 'Arena collapsed before extraction.');
+    return;
+  }
+
+  const speed = Math.max(.045, player.s - (player.r - 16) * .00085);
+
+  player.x += (mouse.x - player.x) * speed;
+  player.y += (mouse.y - player.y) * speed;
+
+  player.x = Math.max(player.r, Math.min(W - player.r, player.x));
+  player.y = Math.max(player.r + 45, Math.min(H - CONTROL_H - player.r, player.y));
+
+  const moved = Math.hypot(player.x - lastPlayerX, player.y - lastPlayerY);
+
+  if (moved < .35 && player.m > 1) {
+    player.m = Math.max(1, player.m - .012);
+    player.r = Math.max(16, player.r - .045);
+    statusEl.textContent = 'Move! Multiplier falling';
+  } else if (!portal.active) {
+    statusEl.textContent = 'Grow';
+  }
+
+  lastPlayerX = player.x;
+  lastPlayerY = player.y;
+
+  for (let i = dots.length - 1; i >= 0; i--) {
+    if (dist(player, dots[i]) < player.r + dots[i].r) {
+      player.m += dots[i].v;
+      player.r += dots[i].v * 3.5;
+      dots.splice(i, 1);
+      dots.push(makeDot());
+    }
+  }
+
+  if (!window.lastBombSpawn) {
+    window.lastBombSpawn = now;
+  }
+
+  if (now - window.lastBombSpawn > 1800) {
+    bombs.push(makeBomb());
+
+    if (bombs.length > 14) {
+      bombs.shift();
+    }
+
+    window.lastBombSpawn = now;
+  }
+
+  for (const b of bombs) {
+    if (dist(player, b) < player.r + b.r) {
+      endGame('BOOM!', 'You hit a bomb and lost the round.');
+      return;
+    }
+  }
+
+  if (portal.active) {
+    if (!portal.lastMove) portal.lastMove = now;
+
+    if (now - portal.lastMove > 1500) {
+      portal.x = rand(90, W - 90);
+      portal.y = rand(100, H - CONTROL_H - 90);
+      portal.lastMove = now;
+    }
+  }
+
+  if (portal.active && dist(player, portal) < player.r + portal.r * .7) {
+    endGame('CASHOUT SUCCESS', 'You escaped with your multiplier.');
+    return;
+  }
+
+  ctx.clearRect(0, 0, W, H);
+  grid();
+
+  ctx.save();
+  ctx.strokeStyle = `rgba(255,0,80,${Math.min(.35, elapsed / roundLength * .35)})`;
+  ctx.lineWidth = 20 + elapsed / 700;
+  ctx.strokeRect(0, 0, W, H - CONTROL_H);
+  ctx.restore();
+
+  dots.forEach(d => {
+    d.p += .08;
+    glow(d.x, d.y, d.r + Math.sin(d.p) * 1.5, '#00eaff', 16);
+
+    ctx.fillStyle = 'white';
+    ctx.font = '11px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('x', d.x, d.y + 4);
+  });
+
+  bombs.forEach(b => {
+    b.p += .12;
+    glow(b.x, b.y, b.r + Math.sin(b.p) * 2, '#ff245d', 24);
+
+    ctx.fillStyle = 'white';
+    ctx.font = '14px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('!', b.x, b.y + 5);
+  });
+
+  if (portal.active) {
+    const pulse = 1 + Math.sin(now / 120) * .08;
+
+    ctx.save();
+    ctx.translate(portal.x, portal.y);
+    ctx.rotate(now / 600);
+    ctx.shadowBlur = 35;
+    ctx.shadowColor = '#ffe600';
+    ctx.strokeStyle = '#ffe600';
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.arc(0, 0, portal.r * pulse, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.fillStyle = '#ffe600';
+    ctx.font = '13px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('ESCAPE', portal.x, portal.y + 5);
+  } else {
+    ctx.fillStyle = 'rgba(255,255,255,.45)';
+    ctx.font = '16px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('Portal opens soon...', W / 2, 42);
+  }
+
+  const playerColor = player.m > 3 ? '#ffd700' : '#8affff';
+  glow(player.x, player.y, player.r, playerColor, 34);
+
+  ctx.fillStyle = '#06111f';
+  ctx.font = 'bold 14px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText(player.m.toFixed(2) + 'x', player.x, player.y + 5);
+
+  if (audioCtx && heartbeatGain && ambientGain) {
+    const intensity = Math.min(player.m / 12, 1);
+
+    ambientGain.gain.value = 0.002 + intensity * 0.012;
+    ambientOsc.frequency.value = 38 + player.m * 3.5;
+
+    const beat = Math.sin(now * (0.003 + intensity * 0.008));
+    const heartbeatPulse = Math.max(0, beat);
+
+    heartbeatGain.gain.value = heartbeatPulse * (0.015 + intensity * 0.08);
+    heartbeatOsc.frequency.value = 38 + player.m * 2.2;
+
+    const scale = 1 + heartbeatPulse * (0.01 + intensity * 0.045);
+    const brightness = 1 + heartbeatPulse * (0.03 + intensity * 0.09);
+
+    document.body.style.transform = `scale(${scale})`;
+    document.body.style.filter = `brightness(${brightness})`;
+    canvas.style.filter = `brightness(${1 + Math.min(player.m * 0.008, 0.08)})`;
+  }
+
+  multEl.textContent = 'x' + player.m.toFixed(2);
+
+  requestAnimationFrame(loop);
+}
+</script>
+</body>
+</html>
