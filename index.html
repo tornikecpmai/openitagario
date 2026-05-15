@@ -78,7 +78,7 @@
 
     #hint {
       position: fixed;
-      bottom: 118px;
+      bottom: 173px;
       width: 100%;
       text-align: center;
       color: rgba(255,255,255,.7);
@@ -92,7 +92,7 @@
       left: 0;
       right: 0;
       bottom: 0;
-      height: 105px;
+      height: 160px;
       z-index: 11;
       display: flex;
       align-items: center;
@@ -117,7 +117,7 @@
     }
 
     #controlPad span {
-      margin-top: 70px;
+      margin-top: 112px;
       pointer-events: none;
     }
   </style>
@@ -130,7 +130,7 @@
   </div>
 
   <div id="hint">Eat blue dots • Avoid red bombs • Escape through yellow portal</div>
-  <div id="controlPad"><span>CONTROL AREA — აქედან მართე ბურთი</span></div>
+  <div id="controlPad"><span>JOYSTICK AREA — აქედან მართე ყველა მიმართულებით</span></div>
 
   <div id="center">
     <h1>GROW OR ESCAPE</h1>
@@ -156,7 +156,7 @@ let lastPlayerX, lastPlayerY;
 let running = false;
 let mouse = { x: 0, y: 0 };
 
-const CONTROL_H = 105;
+const CONTROL_H = 160;
 
 let audioCtx = null;
 let heartbeatOsc = null;
@@ -202,9 +202,26 @@ function handleTouch(e) {
 
     const t = e.touches[0];
 
+    // Bottom control area works like a virtual joystick.
+    // Move finger left/right/up/down inside the pad to move the orb in all directions.
     if (t.clientY > H - CONTROL_H) {
-      mouse.x = t.clientX;
-      mouse.y = H - CONTROL_H - 120;
+      const padCenterX = W / 2;
+      const padCenterY = H - CONTROL_H / 2;
+
+      const dx = t.clientX - padCenterX;
+      const dy = t.clientY - padCenterY;
+
+      const len = Math.hypot(dx, dy) || 1;
+      const maxLen = CONTROL_H * 0.48;
+
+      const nx = dx / len;
+      const ny = dy / len;
+      const power = Math.min(len / maxLen, 1);
+
+      const targetDistance = 260 * power;
+
+      mouse.x = player ? player.x + nx * targetDistance : W / 2 + nx * targetDistance;
+      mouse.y = player ? player.y + ny * targetDistance : H / 2 + ny * targetDistance;
     }
   }
 }
